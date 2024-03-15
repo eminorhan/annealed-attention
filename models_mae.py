@@ -89,13 +89,13 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x):
+    def forward(self, x, scale):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
-        x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_drop.p if self.training else 0.)  # flash attention-2
+        x = F.scaled_dot_product_attention(q, k, v, scale=scale, dropout_p=self.attn_drop.p if self.training else 0.)  # flash attention-2
 
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
@@ -185,8 +185,8 @@ class Block(nn.Module):
         self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
-    def forward(self, x):
-        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
+    def forward(self, x, scale):
+        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x), scale)))
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
         return x
     
@@ -205,7 +205,7 @@ class MaskedAutoencoderViT(nn.Module):
             decoder_num_heads=16, 
             mlp_ratio=4., 
             norm_layer=nn.LayerNorm, 
-            norm_pix_loss=False
+            norm_pix_loss=False,
         ):
         
         super().__init__()
@@ -315,7 +315,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         return x_masked, mask, ids_restore
 
-    def forward_encoder(self, x, mask_ratio):
+    def forward_encoder(self, x, mask_ratio, scale):
         # embed patches
         x = self.patch_embed(x)
 
@@ -332,12 +332,12 @@ class MaskedAutoencoderViT(nn.Module):
 
         # apply Transformer blocks
         for blk in self.blocks:
-            x = blk(x)
+            x = blk(x, scale)
         x = self.norm(x)
 
         return x, mask, ids_restore
 
-    def forward_decoder(self, x, ids_restore):
+    def forward_decoder(self, x, ids_restore, scale):
         # embed tokens
         x = self.decoder_embed(x)
 
@@ -352,7 +352,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         # apply Transformer blocks
         for blk in self.decoder_blocks:
-            x = blk(x)
+            x = blk(x, scale)
         x = self.decoder_norm(x)
 
         # predictor projection
@@ -381,9 +381,9 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
+    def forward(self, imgs, mask_ratio=0.8, scale=1.):
+        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, scale)
+        pred = self.forward_decoder(latent, ids_restore, scale)  # [N, L, p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 

@@ -80,7 +80,6 @@ class Attention(nn.Module):
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
@@ -89,13 +88,13 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x):
+    def forward(self, x, scale):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
-        x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_drop.p if self.training else 0.)  # flash attention-2
+        x = F.scaled_dot_product_attention(q, k, v, scale=scale, dropout_p=self.attn_drop.p if self.training else 0.)  # flash attention-2
 
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
@@ -185,8 +184,8 @@ class Block(nn.Module):
         self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
-    def forward(self, x):
-        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
+    def forward(self, x, scale):
+        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x), scale)))
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
         return x
     
@@ -203,7 +202,7 @@ class ViT(nn.Module):
             mlp_ratio=4., 
             norm_layer=nn.LayerNorm,
             num_classes=None,
-            global_pool=False
+            global_pool=False, 
         ):
         
         super().__init__()
@@ -240,7 +239,7 @@ class ViT(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward_features(self, x):
+    def forward_features(self, x, scale):
         # embed patches
         x = self.patch_embed(x)
 
@@ -254,7 +253,7 @@ class ViT(nn.Module):
 
         # apply Transformer blocks
         for blk in self.blocks:
-            x = blk(x)
+            x = blk(x, scale)
         x = self.norm(x)
         return x
 
@@ -263,8 +262,8 @@ class ViT(nn.Module):
         x = self.head(x)
         return x
 
-    def forward(self, x):
-        x = self.forward_features(x)
+    def forward(self, x, scale=1.):
+        x = self.forward_features(x, scale)
         x = self.forward_head(x)
         return x
 

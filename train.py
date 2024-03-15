@@ -42,6 +42,7 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from a checkpoint')
     parser.add_argument('--input_size', default=224, type=int, help='images input size')
     parser.add_argument('--mask_ratio', default=0.8, type=float, help='Masking ratio (percentage of removed patches).')
+    parser.add_argument('--max_scale', default=100.0, type=float, help='maximum annealing scale')
     parser.add_argument('--norm_pix_loss', action='store_true', help='Use (per-patch) normalized pixels as targets for computing loss (default: false)')
     parser.add_argument('--compile', action='store_true', help='whether to compile the model for improved efficiency (default: false)')
 
@@ -84,7 +85,11 @@ def main(args):
     dataset = ImageFolder(args.data_path, transform=transform)
     sampler = DistributedSampler(dataset, num_replicas=misc.get_world_size(), rank=misc.get_rank(), shuffle=True)
     data_loader = DataLoader(dataset, sampler=sampler, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=True)
-    print('Number of iters per epoch:', len(data_loader))
+    print(f"Number of iters per epoch: {len(data_loader)}")
+
+    # annealing scaler
+    num_iters = args.epochs * len(data_loader)  # total number of training iterations
+    scale_iter = (args.max_scale - 1.) / (num_iters - 1)
 
     # define the model
     model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
@@ -111,6 +116,7 @@ def main(args):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     optimizer.zero_grad()
+    global_iter = 0  # global iteration counter
 
     print("Starting MAE training!")
     for epoch in range(args.start_epoch, args.epochs):
@@ -120,10 +126,12 @@ def main(args):
 
         for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 1, header)):
 
+            scale = 1. + global_iter * scale_iter  # annealing scale
+
             samples = samples.to(device, non_blocking=True)
 
             with torch.cuda.amp.autocast():
-                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+                loss, _, _ = model(samples, mask_ratio=args.mask_ratio, scale=scale)
 
             loss_value = loss.item()
 
@@ -140,6 +148,8 @@ def main(args):
 
             metric_logger.update(loss=loss_value)
 
+            global_iter += 1
+
         # ============ writing logs + saving checkpoint ============
         save_dict = {
             'model': model_without_ddp.state_dict(),
@@ -149,6 +159,7 @@ def main(args):
             'scaler': loss_scaler.state_dict(),
         }
 
+        print(f"Annealing scale at end of epoch: {scale}")
         misc.save_on_master(save_dict, os.path.join(args.output_dir, args.save_prefix + '_checkpoint.pth'))
 
         # gather the stats from all processes
