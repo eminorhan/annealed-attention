@@ -27,7 +27,6 @@ srun python -u ../finetune.py \
 	--output_dir /scratch/eo41/annealed-attention/outputs/models_finetuned \
 	--train_data_path /scratch/work/public/imagenet/train \
 	--val_data_path /scratch/eo41/imagenet/val \
-	--num_labels 1000 \
-	--compile
+	--num_labels 1000
 
 echo "Done"

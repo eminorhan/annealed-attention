@@ -19,16 +19,16 @@ srun python -u ../train.py \
 	--resume '' \
 	--accum_iter 1 \
 	--epochs 100 \
-	--batch_size_per_gpu 1024 \
+	--batch_size_per_gpu 512 \
 	--input_size 224 \
 	--mask_ratio 0.8 \
+	--max_scale 1000.0 \
 	--lr 0.0001 \
 	--min_lr 0.0001 \
 	--weight_decay 0.0 \
 	--num_workers 16 \
 	--output_dir /scratch/eo41/annealed-attention/outputs/models_pretrained \
 	--data_path /scratch/work/public/imagenet/train \
-	--save_prefix vith14_${SLURM_ARRAY_TASK_ID} \
-	--compile
+	--save_prefix vith14_${SLURM_ARRAY_TASK_ID}
 
 echo "Done"

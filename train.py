@@ -124,7 +124,7 @@ def main(args):
         data_loader.sampler.set_epoch(epoch)
         header = 'Epoch: [{}]'.format(epoch)
 
-        for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 1, header)):
+        for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 100, header)):
 
             scale = 1. + global_iter * scale_iter  # annealing scale
 
